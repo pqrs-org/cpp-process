@@ -14,6 +14,7 @@
 #include <spawn.h>
 #include <string>
 #include <sys/wait.h>
+#include <thread>
 #include <vector>
 
 namespace pqrs {
@@ -24,6 +25,8 @@ public:
 
   nod::signal<void(std::shared_ptr<std::vector<uint8_t>>)> stdout_received;
   nod::signal<void(std::shared_ptr<std::vector<uint8_t>>)> stderr_received;
+  nod::signal<void(void)> run_failed;
+  nod::signal<void(int)> exited;
 
   // Methods
 
@@ -37,7 +40,20 @@ public:
     file_actions_ = make_file_actions(*stdout_pipe_, *stderr_pipe_);
   }
 
-  std::optional<int> run(void) {
+  ~process(void) {
+    detach_from_dispatcher([this] {
+      kill(SIGKILL);
+      wait();
+
+      file_actions_ = nullptr;
+      stderr_pipe_ = nullptr;
+      stdout_pipe_ = nullptr;
+    });
+  }
+
+  void run(void) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
     pid_t pid;
     if (posix_spawn(&pid,
                     argv_[0],
@@ -45,83 +61,107 @@ public:
                     nullptr,
                     &(argv_[0]),
                     nullptr) != 0) {
-      return std::nullopt;
+      enqueue_to_dispatcher([this] {
+        run_failed();
+      });
+      return;
     }
 
     pid_ = pid;
+
     stdout_pipe_->close_write_end();
     stderr_pipe_->close_write_end();
 
-    // Poll stdout and stderr
+    // Start polling thread
 
-    std::vector<pollfd> poll_file_descriptors;
-    if (auto fd = stdout_pipe_->get_read_end()) {
-      poll_file_descriptors.push_back({*fd, POLLIN, 0});
-    }
-    if (auto fd = stderr_pipe_->get_read_end()) {
-      poll_file_descriptors.push_back({*fd, POLLIN, 0});
-    }
+    thread_ = std::make_unique<std::thread>([this] {
+      std::vector<pollfd> poll_file_descriptors;
+      {
+        std::lock_guard<std::mutex> lock(mutex_);
 
-    if (!poll_file_descriptors.empty()) {
-      std::vector<uint8_t> buffer(32 * 1024);
-      int timeout = -1;
-      while (poll(&(poll_file_descriptors[0]), poll_file_descriptors.size(), timeout) > 0) {
-        int fd = 0;
-
-        if (poll_file_descriptors[0].revents & POLLIN) {
-          fd = poll_file_descriptors[0].fd;
-
-        } else if (poll_file_descriptors[1].revents & POLLIN) {
-          fd = poll_file_descriptors[1].fd;
-
-        } else {
-          break;
+        if (auto fd = stdout_pipe_->get_read_end()) {
+          poll_file_descriptors.push_back({*fd, POLLIN, 0});
         }
-
-        auto n = read(fd, &(buffer[0]), buffer.size());
-        if (n > 0) {
-          auto b = std::make_shared<std::vector<uint8_t>>(std::begin(buffer), std::begin(buffer) + n);
-
-          if (fd == poll_file_descriptors[0].fd) {
-            enqueue_to_dispatcher([this, b] {
-              stdout_received(b);
-            });
-          } else if (fd == poll_file_descriptors[1].fd) {
-            enqueue_to_dispatcher([this, b] {
-              stderr_received(b);
-            });
-          }
-        } else {
-          break;
+        if (auto fd = stderr_pipe_->get_read_end()) {
+          poll_file_descriptors.push_back({*fd, POLLIN, 0});
         }
       }
-    }
 
-    int stat;
-    if (waitpid(pid, &stat, 0) == pid) {
-      pid_ = std::nullopt;
-      return stat;
-    }
+      if (!poll_file_descriptors.empty()) {
+        std::vector<uint8_t> buffer(32 * 1024);
+        int timeout = -1;
+        while (poll(&(poll_file_descriptors[0]), poll_file_descriptors.size(), timeout) > 0) {
+          int fd = 0;
 
-    return std::nullopt;
-  }
+          if (poll_file_descriptors[0].revents & POLLIN) {
+            fd = poll_file_descriptors[0].fd;
 
-  ~process(void) {
-    detach_from_dispatcher([this] {
-      kill(SIGKILL);
-      file_actions_ = nullptr;
-      stderr_pipe_ = nullptr;
-      stdout_pipe_ = nullptr;
+          } else if (poll_file_descriptors[1].revents & POLLIN) {
+            fd = poll_file_descriptors[1].fd;
+
+          } else {
+            break;
+          }
+
+          auto n = read(fd, &(buffer[0]), buffer.size());
+          if (n > 0) {
+            auto b = std::make_shared<std::vector<uint8_t>>(std::begin(buffer), std::begin(buffer) + n);
+
+            if (fd == poll_file_descriptors[0].fd) {
+              enqueue_to_dispatcher([this, b] {
+                stdout_received(b);
+              });
+            } else if (fd == poll_file_descriptors[1].fd) {
+              enqueue_to_dispatcher([this, b] {
+                stderr_received(b);
+              });
+            }
+          } else {
+            break;
+          }
+        }
+      }
+
+      // Wait process
+
+      {
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        if (pid_) {
+          int stat;
+          if (waitpid(*pid_, &stat, 0) == *pid_) {
+            pid_ = std::nullopt;
+
+            enqueue_to_dispatcher([this, stat] {
+              exited(stat);
+            });
+          }
+        }
+      }
     });
   }
 
-  std::optional<int> kill(int signal) {
+  void kill(int signal) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
     if (pid_) {
-      int r = ::kill(*pid_, signal);
+      ::kill(*pid_, signal);
       pid_ = std::nullopt;
-      return r;
     }
-    return std::nullopt;
+  }
+
+  void wait(void) {
+    std::shared_ptr<std::thread> t;
+
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+
+      t = thread_;
+    }
+
+    if (t && t->joinable()) {
+      t->join();
+    }
   }
 
 private:
@@ -180,6 +220,8 @@ private:
   std::unique_ptr<pipe> stderr_pipe_;
   std::unique_ptr<file_actions> file_actions_;
   std::optional<pid_t> pid_;
+  std::shared_ptr<std::thread> thread_;
+  std::mutex mutex_;
 };
 } // namespace process
 } // namespace pqrs
