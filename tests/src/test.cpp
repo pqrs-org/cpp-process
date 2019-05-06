@@ -50,6 +50,7 @@ TEST_CASE("process") {
                                  "/usr/bin/yes",
                              });
     p.run();
+    std::cout << "pid: " << *(p.get_pid()) << std::endl;
   }
 
   dispatcher->terminate();

@@ -51,6 +51,12 @@ public:
     });
   }
 
+  std::optional<pid_t> get_pid(void) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    return pid_;
+  }
+
   void run(void) {
     std::lock_guard<std::mutex> lock(mutex_);
 
@@ -221,7 +227,7 @@ private:
   std::unique_ptr<file_actions> file_actions_;
   std::optional<pid_t> pid_;
   std::shared_ptr<std::thread> thread_;
-  std::mutex mutex_;
+  mutable std::mutex mutex_;
 };
 } // namespace process
 } // namespace pqrs
