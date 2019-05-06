@@ -38,11 +38,13 @@ TEST_CASE("process") {
                                  "/usr/bin/yes",
                              });
     p.run();
+    std::cout << "pid: " << *(p.get_pid()) << std::endl;
+
     p.kill(SIGHUP);
     p.wait();
   }
 
-  // Kill and wait automatically.
+  // Kill and wait automatically at destructor.
 
   {
     pqrs::process::process p(dispatcher,
@@ -51,6 +53,19 @@ TEST_CASE("process") {
                              });
     p.run();
     std::cout << "pid: " << *(p.get_pid()) << std::endl;
+  }
+
+  // Kill without wait (wait automatically at destructor)
+
+  {
+    pqrs::process::process p(dispatcher,
+                             std::vector<std::string>{
+                                 "/usr/bin/yes",
+                             });
+    p.run();
+    std::cout << "pid: " << *(p.get_pid()) << std::endl;
+
+    p.kill(SIGHUP);
   }
 
   dispatcher->terminate();
