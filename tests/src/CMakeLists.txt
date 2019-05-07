@@ -15,3 +15,8 @@ add_executable(
   test
   test.cpp
 )
+
+add_executable(
+  hello
+  hello.cpp
+)

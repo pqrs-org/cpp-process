@@ -152,7 +152,6 @@ public:
 
     if (pid_) {
       ::kill(*pid_, signal);
-      pid_ = std::nullopt;
     }
   }
 
