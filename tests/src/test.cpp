@@ -113,6 +113,35 @@ TEST_CASE("process") {
     REQUIRE(stderr == "");
   }
 
+  // stderr
+
+  {
+    std::string stdout;
+    std::string stderr;
+    pqrs::process::process p(dispatcher,
+                             std::vector<std::string>{
+                                 "/bin/sh",
+                                 "-c",
+                                 "/not_found.sh"});
+    p.stdout_received.connect([&stdout](auto&& buffer) {
+      for (const auto& c : *buffer) {
+        stdout += c;
+      }
+    });
+    p.stderr_received.connect([&stderr](auto&& buffer) {
+      for (const auto& c : *buffer) {
+        stderr += c;
+      }
+    });
+    p.run();
+    std::cout << "pid: " << *(p.get_pid()) << std::endl;
+
+    p.wait();
+
+    REQUIRE(stdout == "");
+    REQUIRE(stderr == "/bin/sh: /not_found.sh: No such file or directory\n");
+  }
+
   dispatcher->terminate();
   dispatcher = nullptr;
 }
