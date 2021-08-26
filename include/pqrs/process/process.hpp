@@ -68,8 +68,6 @@ private:
 
 public:
   void run(void) {
-    std::lock_guard<std::mutex> lock(mutex_);
-
     killed_ = false;
 
     pid_t pid;
@@ -92,10 +90,11 @@ public:
 
     // Start polling thread
 
-    thread_ = std::make_unique<std::thread>([this] {
-      std::vector<pollfd> poll_file_descriptors;
-      {
-        std::lock_guard<std::mutex> lock(mutex_);
+    {
+      std::lock_guard<std::mutex> lock(thread_mutex_);
+
+      thread_ = std::make_unique<std::thread>([this] {
+        std::vector<pollfd> poll_file_descriptors;
 
         if (auto fd = stdout_pipe_->get_read_end()) {
           poll_file_descriptors.push_back({*fd, POLLIN, 0});
@@ -103,69 +102,69 @@ public:
         if (auto fd = stderr_pipe_->get_read_end()) {
           poll_file_descriptors.push_back({*fd, POLLIN, 0});
         }
-      }
 
-      if (!poll_file_descriptors.empty()) {
-        std::vector<uint8_t> buffer(32 * 1024);
-        int timeout = 500;
-        while (true) {
-          auto poll_result = poll(&(poll_file_descriptors[0]), poll_file_descriptors.size(), timeout);
+        if (!poll_file_descriptors.empty()) {
+          std::vector<uint8_t> buffer(32 * 1024);
+          int timeout = 500;
+          while (true) {
+            auto poll_result = poll(&(poll_file_descriptors[0]), poll_file_descriptors.size(), timeout);
 
-          if (poll_result < 0) {
-            // error
-            break;
-          } else if (poll_result == 0) {
-            // timeout
-            if (killed_) {
+            if (poll_result < 0) {
+              // error
+              break;
+            } else if (poll_result == 0) {
+              // timeout
+              if (killed_) {
+                break;
+              }
+              continue;
+            }
+
+            int fd = 0;
+
+            if (poll_file_descriptors[0].revents & POLLIN) {
+              fd = poll_file_descriptors[0].fd;
+
+            } else if (poll_file_descriptors[1].revents & POLLIN) {
+              fd = poll_file_descriptors[1].fd;
+
+            } else {
               break;
             }
-            continue;
-          }
 
-          int fd = 0;
+            auto n = read(fd, &(buffer[0]), buffer.size());
+            if (n > 0) {
+              auto b = std::make_shared<std::vector<uint8_t>>(std::begin(buffer), std::begin(buffer) + n);
 
-          if (poll_file_descriptors[0].revents & POLLIN) {
-            fd = poll_file_descriptors[0].fd;
-
-          } else if (poll_file_descriptors[1].revents & POLLIN) {
-            fd = poll_file_descriptors[1].fd;
-
-          } else {
-            break;
-          }
-
-          auto n = read(fd, &(buffer[0]), buffer.size());
-          if (n > 0) {
-            auto b = std::make_shared<std::vector<uint8_t>>(std::begin(buffer), std::begin(buffer) + n);
-
-            if (fd == poll_file_descriptors[0].fd) {
-              enqueue_to_dispatcher([this, b] {
-                stdout_received(b);
-              });
-            } else if (fd == poll_file_descriptors[1].fd) {
-              enqueue_to_dispatcher([this, b] {
-                stderr_received(b);
-              });
+              if (fd == poll_file_descriptors[0].fd) {
+                enqueue_to_dispatcher([this, b] {
+                  stdout_received(b);
+                });
+              } else if (fd == poll_file_descriptors[1].fd) {
+                enqueue_to_dispatcher([this, b] {
+                  stderr_received(b);
+                });
+              }
+            } else {
+              break;
             }
-          } else {
-            break;
           }
         }
-      }
 
-      // Wait process
+        // Wait process
 
-      if (auto pid = get_pid()) {
-        int stat;
-        if (waitpid(*pid, &stat, 0) == *pid) {
-          set_pid(std::nullopt);
+        if (auto pid = get_pid()) {
+          int stat;
+          if (waitpid(*pid, &stat, 0) == *pid) {
+            set_pid(std::nullopt);
 
-          enqueue_to_dispatcher([this, stat] {
-            exited(stat);
-          });
+            enqueue_to_dispatcher([this, stat] {
+              exited(stat);
+            });
+          }
         }
-      }
-    });
+      });
+    }
   }
 
   void kill(int signal) {
@@ -180,7 +179,7 @@ public:
     std::shared_ptr<std::thread> t;
 
     {
-      std::lock_guard<std::mutex> lock(mutex_);
+      std::lock_guard<std::mutex> lock(thread_mutex_);
 
       t = thread_;
     }
@@ -242,6 +241,7 @@ private:
 
   std::vector<std::vector<char>> argv_buffer_;
   std::vector<char*> argv_;
+
   std::unique_ptr<pipe> stdout_pipe_;
   std::unique_ptr<pipe> stderr_pipe_;
   std::unique_ptr<file_actions> file_actions_;
@@ -250,7 +250,7 @@ private:
   mutable std::mutex pid_mutex_;
 
   std::shared_ptr<std::thread> thread_;
-  mutable std::mutex mutex_;
+  mutable std::mutex thread_mutex_;
 
   std::atomic<bool> killed_;
 };
