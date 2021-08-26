@@ -46,6 +46,46 @@ TEST_CASE("process") {
     p.wait();
   }
 
+  // Sleep and kill
+
+  {
+    std::string stdout;
+    std::string stderr;
+    auto p = std::make_unique<pqrs::process::process>(dispatcher,
+                                                      std::vector<std::string>{
+                                                          "/bin/sh",
+                                                          "-c",
+                                                          "echo hello; sleep 30; echo world",
+                                                      });
+    p->stdout_received.connect([&stdout](auto&& buffer) {
+      for (const auto& c : *buffer) {
+        stdout += c;
+      }
+    });
+    p->stderr_received.connect([&stderr](auto&& buffer) {
+      for (const auto& c : *buffer) {
+        stderr += c;
+      }
+    });
+    p->run();
+    std::cout << "pid: " << *(p->get_pid()) << std::endl;
+
+    // Wait until sleep is executed.
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+
+    auto start = std::chrono::system_clock::now();
+
+    p->kill(SIGKILL);
+    p = nullptr;
+
+    auto end = std::chrono::system_clock::now();
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+
+    REQUIRE(stdout == "hello\n");
+    REQUIRE(stderr == "");
+    REQUIRE(elapsed < 3000);
+  }
+
   // Kill and wait automatically at destructor.
 
   {
