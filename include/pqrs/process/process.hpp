@@ -31,7 +31,9 @@ public:
   // Methods
 
   process(std::weak_ptr<dispatcher::dispatcher> weak_dispatcher,
-          const std::vector<std::string>& argv) : dispatcher_client(weak_dispatcher) {
+          const std::vector<std::string>& argv)
+      : dispatcher_client(weak_dispatcher),
+        killed_(false) {
     argv_buffer_ = make_argv_buffer(argv);
     argv_ = make_argv(argv_buffer_);
 
@@ -52,13 +54,23 @@ public:
   }
 
   std::optional<pid_t> get_pid(void) const {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<std::mutex> lock(pid_mutex_);
 
     return pid_;
   }
 
+private:
+  void set_pid(std::optional<pid_t> value) {
+    std::lock_guard<std::mutex> lock(pid_mutex_);
+
+    pid_ = value;
+  }
+
+public:
   void run(void) {
     std::lock_guard<std::mutex> lock(mutex_);
+
+    killed_ = false;
 
     pid_t pid;
     if (posix_spawn(&pid,
@@ -73,7 +85,7 @@ public:
       return;
     }
 
-    pid_ = pid;
+    set_pid(pid);
 
     stdout_pipe_->close_write_end();
     stderr_pipe_->close_write_end();
@@ -95,8 +107,21 @@ public:
 
       if (!poll_file_descriptors.empty()) {
         std::vector<uint8_t> buffer(32 * 1024);
-        int timeout = -1;
-        while (poll(&(poll_file_descriptors[0]), poll_file_descriptors.size(), timeout) > 0) {
+        int timeout = 500;
+        while (true) {
+          auto poll_result = poll(&(poll_file_descriptors[0]), poll_file_descriptors.size(), timeout);
+
+          if (poll_result < 0) {
+            // error
+            break;
+          } else if (poll_result == 0) {
+            // timeout
+            if (killed_) {
+              break;
+            }
+            continue;
+          }
+
           int fd = 0;
 
           if (poll_file_descriptors[0].revents & POLLIN) {
@@ -130,28 +155,24 @@ public:
 
       // Wait process
 
-      {
-        std::lock_guard<std::mutex> lock(mutex_);
+      if (auto pid = get_pid()) {
+        int stat;
+        if (waitpid(*pid, &stat, 0) == *pid) {
+          set_pid(std::nullopt);
 
-        if (pid_) {
-          int stat;
-          if (waitpid(*pid_, &stat, 0) == *pid_) {
-            pid_ = std::nullopt;
-
-            enqueue_to_dispatcher([this, stat] {
-              exited(stat);
-            });
-          }
+          enqueue_to_dispatcher([this, stat] {
+            exited(stat);
+          });
         }
       }
     });
   }
 
   void kill(int signal) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    killed_ = true;
 
-    if (pid_) {
-      ::kill(*pid_, signal);
+    if (auto pid = get_pid()) {
+      ::kill(*pid, signal);
     }
   }
 
@@ -224,9 +245,14 @@ private:
   std::unique_ptr<pipe> stdout_pipe_;
   std::unique_ptr<pipe> stderr_pipe_;
   std::unique_ptr<file_actions> file_actions_;
+
   std::optional<pid_t> pid_;
+  mutable std::mutex pid_mutex_;
+
   std::shared_ptr<std::thread> thread_;
   mutable std::mutex mutex_;
+
+  std::atomic<bool> killed_;
 };
 } // namespace process
 } // namespace pqrs
