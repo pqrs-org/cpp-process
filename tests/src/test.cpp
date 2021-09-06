@@ -2,6 +2,7 @@
 #include <catch2/catch.hpp>
 
 #include <pqrs/process.hpp>
+#include <pqrs/string.hpp>
 
 TEST_CASE("process") {
   auto time_source = std::make_shared<pqrs::dispatcher::hardware_time_source>();
@@ -178,8 +179,46 @@ TEST_CASE("process") {
 
     p.wait();
 
+    // Ensure stdout_received and stderr_received are called.
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
     REQUIRE(stdout == "");
     REQUIRE(stderr == "/bin/sh: /not_found.sh: No such file or directory\n");
+  }
+
+  // Environment variable
+
+  {
+    std::string stdout;
+    std::string stderr;
+    pqrs::process::process p(dispatcher,
+                             std::vector<std::string>{
+                                 "/bin/sh",
+                                 "-c",
+                                 "echo $HOME"});
+    p.stdout_received.connect([&stdout](auto&& buffer) {
+      for (const auto& c : *buffer) {
+        stdout += c;
+      }
+    });
+    p.stderr_received.connect([&stderr](auto&& buffer) {
+      for (const auto& c : *buffer) {
+        stderr += c;
+      }
+    });
+    p.run();
+    std::cout << "pid: " << *(p.get_pid()) << std::endl;
+
+    p.wait();
+
+    // Ensure stdout_received and stderr_received are called.
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+    pqrs::string::trim(stdout);
+    std::cout << "stdout: `" << stdout << "`" << std::endl;
+
+    REQUIRE(stdout != "");
+    REQUIRE(stderr == "");
   }
 
   dispatcher->terminate();
