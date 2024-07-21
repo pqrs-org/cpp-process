@@ -24,6 +24,7 @@ extern char** environ;
 
 namespace pqrs {
 namespace process {
+// Capture the data using a signal for commands like top -l that produce output at regular intervals.
 class process final : public dispatcher::extra::dispatcher_client {
 public:
   // Signals (invoked from the dispatcher thread)
