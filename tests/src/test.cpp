@@ -227,5 +227,25 @@ int main(void) {
     dispatcher = nullptr;
   };
 
+  "system"_test = [] {
+    // exit(0)
+    {
+      auto exit_code = pqrs::process::system("/bin/ls / > /dev/null");
+      expect(0 == exit_code);
+    }
+
+    // exit(1)
+    {
+      auto exit_code = pqrs::process::system("/bin/ls /not_found >& /dev/null");
+      expect(1 == exit_code);
+    }
+
+    // The execution of the shell failed
+    {
+      auto exit_code = pqrs::process::system("/not_found >& /dev/null");
+      expect(std::nullopt == exit_code);
+    }
+  };
+
   return 0;
 }
