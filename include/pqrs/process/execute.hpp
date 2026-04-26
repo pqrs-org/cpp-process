@@ -16,7 +16,10 @@ public:
       : time_source_(std::make_shared<pqrs::dispatcher::hardware_time_source>()),
         dispatcher_(std::make_shared<dispatcher::dispatcher>(time_source_)),
         process_(dispatcher_, argv) {
-    // Use `wait` to ensure that all enqueued `stdout_received` and `stderr_received` are called.
+    // `process_.wait()` joins the polling thread, but the signal handlers are
+    // invoked on the dispatcher thread. Use `wait` to ensure that the enqueued
+    // `stdout_received`, `stderr_received`, `run_failed`, and `exited` handlers
+    // have been called before capturing the results.
     auto wait = pqrs::make_thread_wait();
 
     std::stringstream stdout;
