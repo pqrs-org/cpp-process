@@ -188,6 +188,30 @@ int main(void) {
       expect(stderr == "/bin/sh: /not_found.sh: No such file or directory\n");
     }
 
+    // Empty argv
+
+    {
+      auto wait = pqrs::make_thread_wait();
+      bool run_failed = false;
+      bool exited = false;
+
+      pqrs::process::process p(dispatcher, std::vector<std::string>{});
+      p.run_failed.connect([&run_failed, wait] {
+        run_failed = true;
+        wait->notify();
+      });
+      p.exited.connect([&exited](auto&&) {
+        exited = true;
+      });
+      p.run();
+
+      wait->wait_notice();
+
+      expect(run_failed);
+      expect(!exited);
+      expect(!p.get_pid());
+    }
+
     // Environment variable
 
     {
