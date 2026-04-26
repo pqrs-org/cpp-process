@@ -6,6 +6,7 @@
 
 #include "file_actions.hpp"
 #include "pipe.hpp"
+#include <algorithm>
 #include <csignal>
 #include <nod/nod.hpp>
 #include <optional>
@@ -151,7 +152,7 @@ public:
               break;
             }
 
-            auto poll_result = poll(&(poll_file_descriptors[0]), poll_file_descriptors.size(), timeout);
+            auto poll_result = poll(poll_file_descriptors.data(), poll_file_descriptors.size(), timeout);
 
             if (poll_result < 0) {
               // error
