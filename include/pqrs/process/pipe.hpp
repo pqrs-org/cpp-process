@@ -13,10 +13,12 @@ namespace process {
 class pipe final {
 public:
   pipe(void) {
-    memset(file_descriptors_, 0, sizeof(file_descriptors_));
+    file_descriptors_[0] = -1;
+    file_descriptors_[1] = -1;
 
     if (::pipe(file_descriptors_) != 0) {
-      memset(file_descriptors_, 0, sizeof(file_descriptors_));
+      file_descriptors_[0] = -1;
+      file_descriptors_[1] = -1;
     }
   }
 
@@ -29,7 +31,7 @@ public:
     std::lock_guard<std::mutex> lock(mutex_);
 
     int fd = file_descriptors_[0];
-    if (fd) {
+    if (fd != -1) {
       return fd;
     }
     return std::nullopt;
@@ -39,7 +41,7 @@ public:
     std::lock_guard<std::mutex> lock(mutex_);
 
     int fd = file_descriptors_[1];
-    if (fd) {
+    if (fd != -1) {
       return fd;
     }
     return std::nullopt;
@@ -48,18 +50,18 @@ public:
   void close_read_end(void) {
     std::lock_guard<std::mutex> lock(mutex_);
 
-    if (file_descriptors_[0]) {
+    if (file_descriptors_[0] != -1) {
       close(file_descriptors_[0]);
-      file_descriptors_[0] = 0;
+      file_descriptors_[0] = -1;
     }
   }
 
   void close_write_end(void) {
     std::lock_guard<std::mutex> lock(mutex_);
 
-    if (file_descriptors_[1]) {
+    if (file_descriptors_[1] != -1) {
       close(file_descriptors_[1]);
-      file_descriptors_[1] = 0;
+      file_descriptors_[1] = -1;
     }
   }
 
