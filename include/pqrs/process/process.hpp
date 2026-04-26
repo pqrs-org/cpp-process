@@ -74,6 +74,15 @@ private:
 
 public:
   void run(void) {
+    // `process` is a one-shot object. The pipes and file actions are created
+    // in the constructor and consumed by the first run, so subsequent runs fail.
+    if (run_started_.exchange(true)) {
+      enqueue_to_dispatcher([this] {
+        run_failed();
+      });
+      return;
+    }
+
     killed_ = false;
 
     //
@@ -312,6 +321,7 @@ private:
   mutable std::mutex thread_mutex_;
 
   std::atomic<bool> killed_;
+  std::atomic<bool> run_started_{false};
 };
 } // namespace process
 } // namespace pqrs

@@ -113,6 +113,30 @@ int main(void) {
       p.kill(SIGHUP);
     }
 
+    // Multiple run is not allowed.
+
+    {
+      auto wait = pqrs::make_thread_wait();
+      int run_failed_count = 0;
+
+      pqrs::process::process p(dispatcher,
+                               std::vector<std::string>{
+                                   "/bin/echo",
+                                   "hello",
+                               });
+      p.run_failed.connect([&run_failed_count, wait] {
+        ++run_failed_count;
+        wait->notify();
+      });
+      p.run();
+      p.wait();
+
+      p.run();
+      wait->wait_notice();
+
+      expect(run_failed_count == 1_i);
+    }
+
     // SIGHUP will be ignored by program.
 
     {
