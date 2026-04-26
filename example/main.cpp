@@ -1,7 +1,7 @@
 #include <iostream>
 #include <pqrs/process.hpp>
 
-int main(void) {
+int main() {
   //
   // /bin/ls
   //

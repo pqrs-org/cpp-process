@@ -3,7 +3,7 @@
 #include <iostream>
 #include <thread>
 
-int main(void) {
+int main() {
   signal(SIGHUP, SIG_IGN);
   signal(SIGINT, SIG_IGN);
   signal(SIGTERM, SIG_IGN);

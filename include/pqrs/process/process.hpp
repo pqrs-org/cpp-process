@@ -31,7 +31,7 @@ public:
 
   nod::signal<void(std::shared_ptr<std::vector<uint8_t>>)> stdout_received;
   nod::signal<void(std::shared_ptr<std::vector<uint8_t>>)> stderr_received;
-  nod::signal<void(void)> run_failed;
+  nod::signal<void()> run_failed;
   nod::signal<void(int)> exited;
 
   // Methods
@@ -47,7 +47,7 @@ public:
         killed_(false) {
   }
 
-  ~process(void) {
+  ~process() {
     detach_from_dispatcher([this] {
       kill(SIGKILL);
       wait();
@@ -58,7 +58,7 @@ public:
     });
   }
 
-  std::optional<pid_t> get_pid(void) const {
+  std::optional<pid_t> get_pid() const {
     std::lock_guard<std::mutex> lock(pid_mutex_);
 
     return pid_;
@@ -72,7 +72,7 @@ private:
   }
 
 public:
-  void run(void) {
+  void run() {
     // `process` is a one-shot object. The pipes and file actions are created
     // in the constructor and consumed by the first run, so subsequent runs fail.
     if (run_started_.exchange(true)) {
@@ -242,7 +242,7 @@ public:
     }
   }
 
-  void wait(void) {
+  void wait() {
     std::shared_ptr<std::thread> t;
 
     {

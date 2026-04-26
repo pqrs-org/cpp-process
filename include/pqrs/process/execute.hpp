@@ -50,20 +50,20 @@ public:
     stderr_ = stderr.str();
   }
 
-  ~execute(void) {
+  ~execute() {
     dispatcher_->terminate();
     dispatcher_ = nullptr;
   }
 
-  const std::string& get_stdout(void) const {
+  const std::string& get_stdout() const {
     return stdout_;
   }
 
-  const std::string& get_stderr(void) const {
+  const std::string& get_stderr() const {
     return stderr_;
   }
 
-  const std::optional<int>& get_exit_code(void) const {
+  const std::optional<int>& get_exit_code() const {
     return exit_code_;
   }
 

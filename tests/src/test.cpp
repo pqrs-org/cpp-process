@@ -2,7 +2,7 @@
 #include <pqrs/process.hpp>
 #include <pqrs/string.hpp>
 
-int main(void) {
+int main() {
   using namespace boost::ut;
   using namespace boost::ut::literals;
 

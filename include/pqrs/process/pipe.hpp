@@ -12,18 +12,18 @@
 namespace pqrs::process {
 class pipe final {
 public:
-  pipe(void) {
+  pipe() {
     if (::pipe(file_descriptors_.data()) != 0) {
       file_descriptors_.fill(-1);
     }
   }
 
-  ~pipe(void) {
+  ~pipe() {
     close_read_end();
     close_write_end();
   }
 
-  std::optional<int> get_read_end(void) const {
+  std::optional<int> get_read_end() const {
     std::lock_guard<std::mutex> lock(mutex_);
 
     if (const auto fd = file_descriptors_[0];
@@ -33,7 +33,7 @@ public:
     return std::nullopt;
   }
 
-  std::optional<int> get_write_end(void) const {
+  std::optional<int> get_write_end() const {
     std::lock_guard<std::mutex> lock(mutex_);
 
     if (const auto fd = file_descriptors_[1];
@@ -43,7 +43,7 @@ public:
     return std::nullopt;
   }
 
-  void close_read_end(void) {
+  void close_read_end() {
     std::lock_guard<std::mutex> lock(mutex_);
 
     if (file_descriptors_[0] != -1) {
@@ -52,7 +52,7 @@ public:
     }
   }
 
-  void close_write_end(void) {
+  void close_write_end() {
     std::lock_guard<std::mutex> lock(mutex_);
 
     if (file_descriptors_[1] != -1) {
