@@ -76,6 +76,25 @@ public:
   void run(void) {
     killed_ = false;
 
+    //
+    // Run failed immediately if no argv is specified.
+    //
+    // Note:
+    // `argv_` is assembled by `make_argv`, which always appends a trailing `nullptr`,
+    // so its size is `1` when the original argv is empty.
+    //
+
+    if (argv_.size() <= 1 || !argv_[0]) {
+      enqueue_to_dispatcher([this] {
+        run_failed();
+      });
+      return;
+    }
+
+    //
+    // Spawn a process
+    //
+
     pid_t pid;
     if (posix_spawn(&pid,
                     argv_[0],
@@ -101,18 +120,28 @@ public:
 
       thread_ = std::make_unique<std::thread>([this] {
         std::vector<pollfd> poll_file_descriptors;
+        auto stdout_fd = stdout_pipe_->get_read_end();
+        auto stderr_fd = stderr_pipe_->get_read_end();
 
-        if (auto fd = stdout_pipe_->get_read_end()) {
-          poll_file_descriptors.push_back({*fd, POLLIN, 0});
+        if (stdout_fd) {
+          poll_file_descriptors.push_back({*stdout_fd, POLLIN, 0});
         }
-        if (auto fd = stderr_pipe_->get_read_end()) {
-          poll_file_descriptors.push_back({*fd, POLLIN, 0});
+        if (stderr_fd) {
+          poll_file_descriptors.push_back({*stderr_fd, POLLIN, 0});
         }
 
         if (!poll_file_descriptors.empty()) {
           std::vector<uint8_t> buffer(32 * 1024);
           int timeout = 500;
           while (true) {
+            if (std::none_of(std::begin(poll_file_descriptors),
+                             std::end(poll_file_descriptors),
+                             [](const auto& poll_file_descriptor) {
+                               return poll_file_descriptor.fd != -1;
+                             })) {
+              break;
+            }
+
             auto poll_result = poll(&(poll_file_descriptors[0]), poll_file_descriptors.size(), timeout);
 
             if (poll_result < 0) {
@@ -126,33 +155,57 @@ public:
               continue;
             }
 
-            int fd = 0;
+            bool received = false;
 
-            if (poll_file_descriptors[0].revents & POLLIN) {
-              fd = poll_file_descriptors[0].fd;
+            for (auto& poll_file_descriptor : poll_file_descriptors) {
+              if (poll_file_descriptor.fd == -1) {
+                continue;
+              }
 
-            } else if (poll_file_descriptors[1].revents & POLLIN) {
-              fd = poll_file_descriptors[1].fd;
+              if (poll_file_descriptor.revents & (POLLERR | POLLNVAL)) {
+                poll_file_descriptor.fd = -1;
+                poll_file_descriptor.events = 0;
+                poll_file_descriptor.revents = 0;
+                continue;
+              }
 
-            } else {
-              break;
-            }
+              if (!(poll_file_descriptor.revents & (POLLIN | POLLHUP))) {
+                poll_file_descriptor.revents = 0;
+                continue;
+              }
 
-            auto n = read(fd, &(buffer[0]), buffer.size());
-            if (n > 0) {
+              auto n = read(poll_file_descriptor.fd, &(buffer[0]), buffer.size());
+              if (n == 0) {
+                poll_file_descriptor.fd = -1;
+                poll_file_descriptor.events = 0;
+                poll_file_descriptor.revents = 0;
+                continue;
+              }
+              if (n < 0) {
+                poll_file_descriptor.fd = -1;
+                poll_file_descriptor.events = 0;
+                poll_file_descriptor.revents = 0;
+                break;
+              }
+
               auto b = std::make_shared<std::vector<uint8_t>>(std::begin(buffer), std::begin(buffer) + n);
 
-              if (fd == poll_file_descriptors[0].fd) {
+              if (stdout_fd && poll_file_descriptor.fd == *stdout_fd) {
                 enqueue_to_dispatcher([this, b] {
                   stdout_received(b);
                 });
-              } else if (fd == poll_file_descriptors[1].fd) {
+              } else if (stderr_fd && poll_file_descriptor.fd == *stderr_fd) {
                 enqueue_to_dispatcher([this, b] {
                   stderr_received(b);
                 });
               }
-            } else {
-              break;
+
+              received = true;
+              poll_file_descriptor.revents = 0;
+            }
+
+            if (!received) {
+              continue;
             }
           }
         }

@@ -188,6 +188,38 @@ int main(void) {
       expect(stderr == "/bin/sh: /not_found.sh: No such file or directory\n");
     }
 
+    // stderr after stdout is closed
+
+    {
+      std::string stdout;
+      std::string stderr;
+      pqrs::process::process p(dispatcher,
+                               std::vector<std::string>{
+                                   "/bin/sh",
+                                   "-c",
+                                   "echo hello; exec 1>&-; sleep 1; echo world >&2"});
+      p.stdout_received.connect([&stdout](auto&& buffer) {
+        for (const auto& c : *buffer) {
+          stdout += c;
+        }
+      });
+      p.stderr_received.connect([&stderr](auto&& buffer) {
+        for (const auto& c : *buffer) {
+          stderr += c;
+        }
+      });
+      p.run();
+      std::cout << "pid: " << *(p.get_pid()) << std::endl;
+
+      p.wait();
+
+      // Ensure stdout_received and stderr_received are called.
+      std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+      expect(stdout == "hello\n");
+      expect(stderr == "world\n");
+    }
+
     // Empty argv
 
     {
@@ -249,6 +281,26 @@ int main(void) {
 
     dispatcher->terminate();
     dispatcher = nullptr;
+  };
+
+  "execute"_test = [] {
+    {
+      pqrs::process::execute e(std::vector<std::string>{
+          "/bin/sh",
+          "-c",
+          "exit 3",
+      });
+      expect(3 == e.get_exit_code());
+    }
+
+    {
+      pqrs::process::execute e(std::vector<std::string>{
+          "/bin/sh",
+          "-c",
+          "kill -HUP $$",
+      });
+      expect(std::nullopt == e.get_exit_code());
+    }
   };
 
   "system"_test = [] {
