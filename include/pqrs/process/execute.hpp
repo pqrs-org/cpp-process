@@ -36,7 +36,11 @@ public:
       wait->notify();
     });
     process_.exited.connect([this, wait](auto&& status) {
-      exit_code_ = status;
+      if (WIFEXITED(status)) {
+        exit_code_ = WEXITSTATUS(status);
+      } else {
+        exit_code_ = std::nullopt;
+      }
       wait->notify();
     });
     process_.run();
