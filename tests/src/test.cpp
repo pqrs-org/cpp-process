@@ -11,6 +11,7 @@ int main() {
     auto dispatcher = std::make_shared<pqrs::dispatcher::dispatcher>(time_source);
 
     {
+      const auto wait = pqrs::make_thread_wait();
       std::string stdout;
       std::string stderr;
       pqrs::process::process p(dispatcher,
@@ -28,10 +29,14 @@ int main() {
           stderr += c;
         }
       });
+      p.exited.connect([wait](auto&&) {
+        wait->notify();
+      });
       p.run();
       std::cout << "pid: " << *(p.get_pid()) << std::endl;
 
       p.wait();
+      wait->wait_notice();
 
       expect(stdout == "hello\n");
       expect(stderr == "");
@@ -52,6 +57,7 @@ int main() {
     // Sleep and kill
 
     {
+      const auto hello_wait = pqrs::make_thread_wait();
       std::string stdout;
       std::string stderr;
       auto p = std::make_unique<pqrs::process::process>(dispatcher,
@@ -60,9 +66,12 @@ int main() {
                                                             "-c",
                                                             "echo hello; sleep 30; echo world",
                                                         });
-      p->stdout_received.connect([&stdout](auto&& buffer) {
+      p->stdout_received.connect([&stdout, hello_wait](auto&& buffer) {
         for (const auto& c : *buffer) {
           stdout += c;
+        }
+        if (stdout == "hello\n") {
+          hello_wait->notify();
         }
       });
       p->stderr_received.connect([&stderr](auto&& buffer) {
@@ -73,8 +82,7 @@ int main() {
       p->run();
       std::cout << "pid: " << *(p->get_pid()) << std::endl;
 
-      // Wait until sleep is executed.
-      std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+      hello_wait->wait_notice();
 
       auto start = std::chrono::system_clock::now();
 
@@ -140,6 +148,7 @@ int main() {
     // SIGHUP will be ignored by program.
 
     {
+      const auto hello_wait = pqrs::make_thread_wait();
       std::string stdout;
       std::string stderr;
       {
@@ -147,9 +156,12 @@ int main() {
                                  std::vector<std::string>{
                                      "./build/hello",
                                  });
-        p.stdout_received.connect([&stdout](auto&& buffer) {
+        p.stdout_received.connect([&stdout, hello_wait](auto&& buffer) {
           for (const auto& c : *buffer) {
             stdout += c;
+          }
+          if (stdout == "hello\n") {
+            hello_wait->notify();
           }
         });
         p.stderr_received.connect([&stderr](auto&& buffer) {
@@ -165,12 +177,7 @@ int main() {
         });
         p.run();
 
-        // Wait until `signal` in hello.cpp is called.
-        for (int i = 0; i < 10; ++i) {
-          std::cout << "." << std::flush;
-          std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        }
-        std::cout << std::endl;
+        hello_wait->wait_notice();
 
         // SIGHUP is ignored.
         p.kill(SIGHUP);
@@ -183,6 +190,7 @@ int main() {
     // stderr
 
     {
+      const auto wait = pqrs::make_thread_wait();
       std::string stdout;
       std::string stderr;
       pqrs::process::process p(dispatcher,
@@ -200,13 +208,14 @@ int main() {
           stderr += c;
         }
       });
+      p.exited.connect([wait](auto&&) {
+        wait->notify();
+      });
       p.run();
       std::cout << "pid: " << *(p.get_pid()) << std::endl;
 
       p.wait();
-
-      // Ensure stdout_received and stderr_received are called.
-      std::this_thread::sleep_for(std::chrono::milliseconds(500));
+      wait->wait_notice();
 
       expect(stdout == "");
       expect(stderr == "/bin/sh: /not_found.sh: No such file or directory\n");
@@ -215,6 +224,7 @@ int main() {
     // stderr after stdout is closed
 
     {
+      const auto wait = pqrs::make_thread_wait();
       std::string stdout;
       std::string stderr;
       pqrs::process::process p(dispatcher,
@@ -232,13 +242,14 @@ int main() {
           stderr += c;
         }
       });
+      p.exited.connect([wait](auto&&) {
+        wait->notify();
+      });
       p.run();
       std::cout << "pid: " << *(p.get_pid()) << std::endl;
 
       p.wait();
-
-      // Ensure stdout_received and stderr_received are called.
-      std::this_thread::sleep_for(std::chrono::milliseconds(500));
+      wait->wait_notice();
 
       expect(stdout == "hello\n");
       expect(stderr == "world\n");
@@ -271,6 +282,7 @@ int main() {
     // Environment variable
 
     {
+      const auto wait = pqrs::make_thread_wait();
       std::string stdout;
       std::string stderr;
       pqrs::process::process p(dispatcher,
@@ -288,13 +300,14 @@ int main() {
           stderr += c;
         }
       });
+      p.exited.connect([wait](auto&&) {
+        wait->notify();
+      });
       p.run();
       std::cout << "pid: " << *(p.get_pid()) << std::endl;
 
       p.wait();
-
-      // Ensure stdout_received and stderr_received are called.
-      std::this_thread::sleep_for(std::chrono::milliseconds(500));
+      wait->wait_notice();
 
       pqrs::string::trim(stdout);
       std::cout << "stdout: `" << stdout << "`" << std::endl;
