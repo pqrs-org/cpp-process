@@ -4,21 +4,17 @@
 // Distributed under the Boost Software License, Version 1.0.
 // (See https://www.boost.org/LICENSE_1_0.txt)
 
+#include <array>
 #include <mutex>
 #include <optional>
 #include <unistd.h>
 
-namespace pqrs {
-namespace process {
+namespace pqrs::process {
 class pipe final {
 public:
   pipe(void) {
-    file_descriptors_[0] = -1;
-    file_descriptors_[1] = -1;
-
-    if (::pipe(file_descriptors_) != 0) {
-      file_descriptors_[0] = -1;
-      file_descriptors_[1] = -1;
+    if (::pipe(file_descriptors_.data()) != 0) {
+      file_descriptors_.fill(-1);
     }
   }
 
@@ -30,8 +26,8 @@ public:
   std::optional<int> get_read_end(void) const {
     std::lock_guard<std::mutex> lock(mutex_);
 
-    int fd = file_descriptors_[0];
-    if (fd != -1) {
+    if (const auto fd = file_descriptors_[0];
+        fd != -1) {
       return fd;
     }
     return std::nullopt;
@@ -40,8 +36,8 @@ public:
   std::optional<int> get_write_end(void) const {
     std::lock_guard<std::mutex> lock(mutex_);
 
-    int fd = file_descriptors_[1];
-    if (fd != -1) {
+    if (const auto fd = file_descriptors_[1];
+        fd != -1) {
       return fd;
     }
     return std::nullopt;
@@ -66,8 +62,10 @@ public:
   }
 
 private:
-  int file_descriptors_[2];
+  std::array<int, 2> file_descriptors_{
+      -1,
+      -1,
+  };
   mutable std::mutex mutex_;
 };
-} // namespace process
-} // namespace pqrs
+} // namespace pqrs::process

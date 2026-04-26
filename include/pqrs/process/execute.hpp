@@ -7,8 +7,7 @@
 #include "process.hpp"
 #include <sstream>
 
-namespace pqrs {
-namespace process {
+namespace pqrs::process {
 // Execute the command and wait for it to finish​.
 class execute {
 public:
@@ -20,7 +19,7 @@ public:
     // invoked on the dispatcher thread. Use `wait` to ensure that the enqueued
     // `stdout_received`, `stderr_received`, `run_failed`, and `exited` handlers
     // have been called before capturing the results.
-    auto wait = pqrs::make_thread_wait();
+    const auto wait = pqrs::make_thread_wait();
 
     std::stringstream stdout;
     std::stringstream stderr;
@@ -39,11 +38,7 @@ public:
       wait->notify();
     });
     process_.exited.connect([this, wait](auto&& status) {
-      if (WIFEXITED(status)) {
-        exit_code_ = WEXITSTATUS(status);
-      } else {
-        exit_code_ = std::nullopt;
-      }
+      exit_code_ = WIFEXITED(status) ? std::optional<int>(WEXITSTATUS(status)) : std::nullopt;
       wait->notify();
     });
     process_.run();
@@ -81,5 +76,4 @@ private:
   std::string stderr_;
   std::optional<int> exit_code_;
 };
-} // namespace process
-} // namespace pqrs
+} // namespace pqrs::process

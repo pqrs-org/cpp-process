@@ -23,8 +23,7 @@
 extern char** environ;
 #endif
 
-namespace pqrs {
-namespace process {
+namespace pqrs::process {
 // Capture the data using a signal for commands like top -l that produce output at regular intervals.
 class process final : public dispatcher::extra::dispatcher_client {
 public:
@@ -40,13 +39,12 @@ public:
   process(std::weak_ptr<dispatcher::dispatcher> weak_dispatcher,
           const std::vector<std::string>& argv)
       : dispatcher_client(weak_dispatcher),
+        argv_buffer_(make_argv_buffer(argv)),
+        argv_(make_argv(argv_buffer_)),
+        stdout_pipe_(std::make_unique<pipe>()),
+        stderr_pipe_(std::make_unique<pipe>()),
+        file_actions_(make_file_actions(*stdout_pipe_, *stderr_pipe_)),
         killed_(false) {
-    argv_buffer_ = make_argv_buffer(argv);
-    argv_ = make_argv(argv_buffer_);
-
-    stdout_pipe_ = std::make_unique<pipe>();
-    stderr_pipe_ = std::make_unique<pipe>();
-    file_actions_ = make_file_actions(*stdout_pipe_, *stderr_pipe_);
   }
 
   ~process(void) {
@@ -128,7 +126,7 @@ public:
     {
       std::lock_guard<std::mutex> lock(thread_mutex_);
 
-      thread_ = std::make_unique<std::thread>([this] {
+      thread_ = std::make_shared<std::thread>([this] {
         std::vector<pollfd> poll_file_descriptors;
         auto stdout_fd = stdout_pipe_->get_read_end();
         auto stderr_fd = stderr_pipe_->get_read_end();
@@ -222,7 +220,7 @@ public:
 
         // Wait process
 
-        if (auto pid = get_pid()) {
+        if (const auto pid = get_pid()) {
           int stat;
           if (waitpid(*pid, &stat, 0) == *pid) {
             set_pid(std::nullopt);
@@ -261,11 +259,12 @@ public:
 private:
   static std::vector<std::vector<char>> make_argv_buffer(const std::vector<std::string>& argv) {
     std::vector<std::vector<char>> buffer;
+    buffer.reserve(argv.size());
 
     for (const auto& a : argv) {
       std::vector<char> b(std::begin(a), std::end(a));
       b.push_back('\0');
-      buffer.push_back(b);
+      buffer.push_back(std::move(b));
     }
 
     return buffer;
@@ -273,9 +272,10 @@ private:
 
   static std::vector<char*> make_argv(std::vector<std::vector<char>>& buffer) {
     std::vector<char*> argv;
+    argv.reserve(buffer.size() + 1);
 
     for (auto&& b : buffer) {
-      argv.push_back(&(b[0]));
+      argv.push_back(b.data());
     }
 
     argv.push_back(nullptr);
@@ -324,5 +324,4 @@ private:
   std::atomic<bool> killed_;
   std::atomic<bool> run_started_{false};
 };
-} // namespace process
-} // namespace pqrs
+} // namespace pqrs::process

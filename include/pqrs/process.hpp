@@ -12,27 +12,20 @@
 #include <optional>
 #include <string>
 
-namespace pqrs {
-namespace process {
+namespace pqrs::process {
 
 inline std::optional<int> system(const std::string& command) {
   auto status = std::system(command.c_str());
 
-  if (status == -1) {
+  if (status == -1 || !WIFEXITED(status)) {
     return std::nullopt;
   }
 
-  if (WIFEXITED(status)) {
-    // `system` itself may return `127` when shell execution fails,
-    // but the executed process may also return `127`.
-    // As long as we use `std::system`, there is no reliable way to
-    // distinguish these cases, so `127` is returned as-is.
-
-    return WEXITSTATUS(status);
-  }
-
-  return std::nullopt;
+  // `system` itself may return `127` when shell execution fails,
+  // but the executed process may also return `127`.
+  // As long as we use `std::system`, there is no reliable way to
+  // distinguish these cases, so `127` is returned as-is.
+  return WEXITSTATUS(status);
 }
 
-} // namespace process
-} // namespace pqrs
+} // namespace pqrs::process
