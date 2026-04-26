@@ -240,10 +240,10 @@ int main(void) {
       expect(1 == exit_code);
     }
 
-    // The execution of the shell failed
+    // exit(127)
     {
       auto exit_code = pqrs::process::system("/not_found >& /dev/null");
-      expect(std::nullopt == exit_code);
+      expect(127 == exit_code);
     }
   };
 

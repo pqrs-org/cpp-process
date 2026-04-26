@@ -10,26 +10,25 @@
 #include "process/process.hpp"
 #include <cstdlib>
 #include <optional>
-#include <string_view>
+#include <string>
 
 namespace pqrs {
 namespace process {
 
-inline std::optional<int> system(std::string_view command) {
-  auto status = std::system(command.data());
+inline std::optional<int> system(const std::string& command) {
+  auto status = std::system(command.c_str());
 
   if (status == -1) {
     return std::nullopt;
   }
 
   if (WIFEXITED(status)) {
-    auto exit_code = WEXITSTATUS(status);
-    if (exit_code == 127) {
-      // The execution of the shell failed
-      return std::nullopt;
-    }
+    // `system` itself may return `127` when shell execution fails,
+    // but the executed process may also return `127`.
+    // As long as we use `std::system`, there is no reliable way to
+    // distinguish these cases, so `127` is returned as-is.
 
-    return exit_code;
+    return WEXITSTATUS(status);
   }
 
   return std::nullopt;
