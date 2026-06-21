@@ -1,8 +1,64 @@
+#include <atomic>
 #include <boost/ut.hpp>
 #include <chrono>
+#include <csignal>
 #include <pqrs/process.hpp>
 #include <pqrs/string.hpp>
+#include <pthread.h>
 #include <thread>
+
+namespace {
+
+void handle_sigusr1(int) {
+}
+
+void set_sigusr1_blocked(bool blocked) {
+  sigset_t set;
+  sigemptyset(&set);
+  sigaddset(&set, SIGUSR1);
+  pthread_sigmask(blocked ? SIG_BLOCK : SIG_UNBLOCK, &set, nullptr);
+}
+
+class scoped_sigusr1_handler final {
+public:
+  scoped_sigusr1_handler() {
+    sigset_t empty_set;
+    sigemptyset(&empty_set);
+    pthread_sigmask(SIG_BLOCK, &empty_set, &old_mask_);
+
+    struct sigaction action{};
+    action.sa_handler = handle_sigusr1;
+    sigemptyset(&action.sa_mask);
+    sigaction(SIGUSR1, &action, &old_action_);
+  }
+
+  ~scoped_sigusr1_handler() {
+    sigaction(SIGUSR1, &old_action_, nullptr);
+    pthread_sigmask(SIG_SETMASK, &old_mask_, nullptr);
+  }
+
+private:
+  struct sigaction old_action_{};
+  sigset_t old_mask_{};
+};
+
+template <typename F>
+bool wait_until(F&& predicate,
+                std::chrono::milliseconds timeout = std::chrono::milliseconds(3000)) {
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+
+  while (std::chrono::steady_clock::now() < deadline) {
+    if (predicate()) {
+      return true;
+    }
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+
+  return predicate();
+}
+
+} // namespace
 
 int main() {
   using namespace boost::ut;
@@ -201,6 +257,78 @@ int main() {
       auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
 
       expect(elapsed < 3000);
+    }
+
+    // EINTR while poll is waiting should not stop reading stdout.
+
+    {
+      scoped_sigusr1_handler sigusr1_handler;
+
+      set_sigusr1_blocked(true);
+      auto local_time_source = std::make_shared<pqrs::dispatcher::hardware_time_source>();
+      auto local_dispatcher = std::make_shared<pqrs::dispatcher::dispatcher>(local_time_source);
+
+      std::string stdout;
+      std::atomic<bool> exited = false;
+
+      set_sigusr1_blocked(false);
+      pqrs::process::process p(local_dispatcher,
+                               std::vector<std::string>{
+                                   "/bin/sh",
+                                   "-c",
+                                   "sleep 0.2; kill -USR1 $PPID; sleep 0.2; echo poll-eintr",
+                               });
+      p.stdout_received.connect([&stdout](auto&& buffer) {
+        for (const auto& c : *buffer) {
+          stdout += c;
+        }
+      });
+      p.exited.connect([&exited](auto&&) {
+        exited = true;
+      });
+      p.run();
+      set_sigusr1_blocked(true);
+
+      p.wait();
+      expect(wait_until([&exited] {
+        return exited.load();
+      }));
+      expect(stdout == "poll-eintr\n");
+
+      local_dispatcher->terminate();
+    }
+
+    // EINTR while waitpid is waiting should not drop the exited signal.
+
+    {
+      scoped_sigusr1_handler sigusr1_handler;
+
+      set_sigusr1_blocked(true);
+      auto local_time_source = std::make_shared<pqrs::dispatcher::hardware_time_source>();
+      auto local_dispatcher = std::make_shared<pqrs::dispatcher::dispatcher>(local_time_source);
+
+      std::atomic<int> exit_code = -1;
+
+      set_sigusr1_blocked(false);
+      pqrs::process::process p(local_dispatcher,
+                               std::vector<std::string>{
+                                   "/bin/sh",
+                                   "-c",
+                                   "exec 1>&-; exec 2>&-; sleep 0.2; kill -USR1 $PPID; sleep 0.2; exit 7",
+                               });
+      p.exited.connect([&exit_code](auto&& status) {
+        exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : -2;
+      });
+      p.run();
+      set_sigusr1_blocked(true);
+
+      p.wait();
+      expect(wait_until([&exit_code] {
+        return exit_code.load() != -1;
+      }));
+      expect(exit_code.load() == 7_i);
+
+      local_dispatcher->terminate();
     }
 
     // SIGHUP will be ignored by program.
