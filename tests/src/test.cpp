@@ -1,6 +1,8 @@
 #include <boost/ut.hpp>
+#include <chrono>
 #include <pqrs/process.hpp>
 #include <pqrs/string.hpp>
+#include <thread>
 
 int main() {
   using namespace boost::ut;
@@ -153,6 +155,52 @@ int main() {
       wait->wait_notice();
 
       expect(run_failed_count == 1_i);
+    }
+
+    // Multiple wait calls are allowed.
+
+    {
+      pqrs::process::process p(dispatcher,
+                               std::vector<std::string>{
+                                   "/bin/sh",
+                                   "-c",
+                                   "sleep 1",
+                               });
+      p.run();
+
+      std::thread t1([&p] {
+        p.wait();
+      });
+      std::thread t2([&p] {
+        p.wait();
+      });
+
+      t1.join();
+      t2.join();
+    }
+
+    // Destructor fallback after dispatcher is already terminated.
+
+    {
+      auto local_time_source = std::make_shared<pqrs::dispatcher::hardware_time_source>();
+      auto local_dispatcher = std::make_shared<pqrs::dispatcher::dispatcher>(local_time_source);
+      auto p = std::make_unique<pqrs::process::process>(local_dispatcher,
+                                                        std::vector<std::string>{
+                                                            "/bin/sh",
+                                                            "-c",
+                                                            "sleep 30",
+                                                        });
+      p->run();
+      expect(static_cast<bool>(p->get_pid()));
+
+      local_dispatcher->terminate();
+
+      auto start = std::chrono::system_clock::now();
+      p = nullptr;
+      auto end = std::chrono::system_clock::now();
+      auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+
+      expect(elapsed < 3000);
     }
 
     // SIGHUP will be ignored by program.

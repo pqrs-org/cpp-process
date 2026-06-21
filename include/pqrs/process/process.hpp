@@ -8,6 +8,7 @@
 #include "pipe.hpp"
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <csignal>
 #include <nod/nod.hpp>
 #include <optional>
@@ -49,14 +50,16 @@ public:
   }
 
   ~process() {
-    detach_from_dispatcher([this] {
-      kill(SIGKILL);
-      wait();
+    bool cleanup_done = false;
 
-      file_actions_ = nullptr;
-      stderr_pipe_ = nullptr;
-      stdout_pipe_ = nullptr;
+    detach_from_dispatcher([this, &cleanup_done] {
+      cleanup_process_resources();
+      cleanup_done = true;
     });
+
+    if (!cleanup_done) {
+      cleanup_process_resources();
+    }
   }
 
   process(const process&) = delete;
@@ -159,7 +162,12 @@ public:
             const auto poll_result = poll(poll_file_descriptors.data(), poll_file_descriptors.size(), timeout);
 
             if (poll_result < 0) {
-              // error
+              // Signals can interrupt poll/read while the child process is still
+              // running. If we stop draining pipes on EINTR, the child may block
+              // on a full pipe and waitpid can wait forever.
+              if (errno == EINTR) {
+                continue;
+              }
               break;
             } else if (poll_result == 0) {
               // timeout
@@ -196,6 +204,10 @@ public:
                 continue;
               }
               if (n < 0) {
+                if (errno == EINTR) {
+                  poll_file_descriptor.revents = 0;
+                  continue;
+                }
                 poll_file_descriptor.fd = -1;
                 poll_file_descriptor.events = 0;
                 poll_file_descriptor.revents = 0;
@@ -228,7 +240,12 @@ public:
 
         if (const auto pid = get_pid()) {
           int stat;
-          if (waitpid(*pid, &stat, 0) == *pid) {
+          pid_t waitpid_result;
+          do {
+            waitpid_result = waitpid(*pid, &stat, 0);
+          } while (waitpid_result == -1 && errno == EINTR);
+
+          if (waitpid_result == *pid) {
             set_pid(std::nullopt);
 
             enqueue_to_dispatcher([this, stat] {
@@ -254,7 +271,7 @@ public:
     {
       std::lock_guard<std::mutex> lock(thread_mutex_);
 
-      t = thread_;
+      t = std::move(thread_);
     }
 
     if (t && t->joinable()) {
@@ -263,6 +280,15 @@ public:
   }
 
 private:
+  void cleanup_process_resources() {
+    kill(SIGKILL);
+    wait();
+
+    file_actions_ = nullptr;
+    stderr_pipe_ = nullptr;
+    stdout_pipe_ = nullptr;
+  }
+
   static std::vector<std::vector<char>> make_argv_buffer(const std::vector<std::string>& argv) {
     std::vector<std::vector<char>> buffer;
     buffer.reserve(argv.size());
