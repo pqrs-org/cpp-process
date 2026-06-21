@@ -14,22 +14,29 @@ int main() {
       const auto wait = pqrs::make_thread_wait();
       std::string stdout;
       std::string stderr;
+      bool stdout_called_on_dispatcher_thread = false;
+      bool stderr_called_on_dispatcher_thread = false;
+      bool exited_called_on_dispatcher_thread = false;
       pqrs::process::process p(dispatcher,
                                std::vector<std::string>{
-                                   "/bin/echo",
-                                   "hello",
+                                   "/bin/sh",
+                                   "-c",
+                                   "echo hello; echo error >&2",
                                });
-      p.stdout_received.connect([&stdout](auto&& buffer) {
+      p.stdout_received.connect([&p, &stdout, &stdout_called_on_dispatcher_thread](auto&& buffer) {
+        stdout_called_on_dispatcher_thread = p.dispatcher_thread();
         for (const auto& c : *buffer) {
           stdout += c;
         }
       });
-      p.stderr_received.connect([&stderr](auto&& buffer) {
+      p.stderr_received.connect([&p, &stderr, &stderr_called_on_dispatcher_thread](auto&& buffer) {
+        stderr_called_on_dispatcher_thread = p.dispatcher_thread();
         for (const auto& c : *buffer) {
           stderr += c;
         }
       });
-      p.exited.connect([wait](auto&&) {
+      p.exited.connect([&p, &exited_called_on_dispatcher_thread, wait](auto&&) {
+        exited_called_on_dispatcher_thread = p.dispatcher_thread();
         wait->notify();
       });
       p.run();
@@ -39,7 +46,10 @@ int main() {
       wait->wait_notice();
 
       expect(stdout == "hello\n");
-      expect(stderr == "");
+      expect(stderr == "error\n");
+      expect(stdout_called_on_dispatcher_thread);
+      expect(stderr_called_on_dispatcher_thread);
+      expect(exited_called_on_dispatcher_thread);
     }
 
     {
@@ -261,10 +271,12 @@ int main() {
       auto wait = pqrs::make_thread_wait();
       bool run_failed = false;
       bool exited = false;
+      bool run_failed_called_on_dispatcher_thread = false;
 
       pqrs::process::process p(dispatcher, std::vector<std::string>{});
-      p.run_failed.connect([&run_failed, wait] {
+      p.run_failed.connect([&p, &run_failed, &run_failed_called_on_dispatcher_thread, wait] {
         run_failed = true;
+        run_failed_called_on_dispatcher_thread = p.dispatcher_thread();
         wait->notify();
       });
       p.exited.connect([&exited](auto&&) {
@@ -275,6 +287,7 @@ int main() {
       wait->wait_notice();
 
       expect(run_failed);
+      expect(run_failed_called_on_dispatcher_thread);
       expect(!exited);
       expect(!p.get_pid());
     }
@@ -325,9 +338,11 @@ int main() {
       pqrs::process::execute e(std::vector<std::string>{
           "/bin/sh",
           "-c",
-          "exit 3",
+          "echo hello; echo error >&2; exit 3",
       });
       expect(3 == e.get_exit_code());
+      expect("hello\n" == e.get_stdout());
+      expect("error\n" == e.get_stderr());
     }
 
     {
@@ -337,6 +352,13 @@ int main() {
           "kill -HUP $$",
       });
       expect(std::nullopt == e.get_exit_code());
+    }
+
+    {
+      pqrs::process::execute e(std::vector<std::string>{});
+      expect(std::nullopt == e.get_exit_code());
+      expect("" == e.get_stdout());
+      expect("" == e.get_stderr());
     }
   };
 
