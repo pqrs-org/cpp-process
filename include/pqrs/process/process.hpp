@@ -46,11 +46,7 @@ public:
           const std::vector<std::string>& argv)
       : dispatcher_client(weak_dispatcher),
         argv_buffer_(make_argv_buffer(argv)),
-        argv_(make_argv(argv_buffer_)),
-        stdout_pipe_(std::make_unique<pipe>()),
-        stderr_pipe_(std::make_unique<pipe>()),
-        file_actions_(make_file_actions(*stdout_pipe_,
-                                        *stderr_pipe_)) {
+        argv_(make_argv(argv_buffer_)) {
     dispatcher_client_constructor_exception_guard_.initialize();
   }
 
@@ -348,9 +344,10 @@ private:
   std::vector<std::vector<char>> argv_buffer_;
   std::vector<char*> argv_;
 
-  std::unique_ptr<pipe> stdout_pipe_;
-  std::unique_ptr<pipe> stderr_pipe_;
-  std::unique_ptr<file_actions> file_actions_;
+  std::unique_ptr<pipe> stdout_pipe_{std::make_unique<pipe>()};
+  std::unique_ptr<pipe> stderr_pipe_{std::make_unique<pipe>()};
+  std::unique_ptr<file_actions> file_actions_{make_file_actions(*stdout_pipe_,
+                                                                *stderr_pipe_)};
 
   std::optional<pid_t> pid_;
   mutable std::mutex pid_mutex_;
