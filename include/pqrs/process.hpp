@@ -1,6 +1,6 @@
 #pragma once
 
-// pqrs::process v2.4.0
+// pqrs::process v2.5.0
 
 // (C) Copyright Takayama Fumihiko 2019.
 // Distributed under the Boost Software License, Version 1.0.
